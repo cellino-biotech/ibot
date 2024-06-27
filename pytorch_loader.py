@@ -1,25 +1,26 @@
 import os
+import math
 import wandb
 import pandas as pd
 import glob
 import tensorflow
 import torch
-
+from functools import *
 
 
 from cellino_utils.density_data2d import DensityData2D
 
-# WB_DIR = 'mnt/disks/dl-data1/wandb'
+WB_DIR = 'mnt/disks/dl-data1/wandb'
 # WB_DIR = '/Users/sangkyunlee/Cellino/DL/data/wandb'
-WB_DIR = '/media/slee/DATA1/DL/data/wandb'
+# WB_DIR = '/media/slee/DATA1/DL/data/wandb'
 wb_entity = 'cellino-ml-ninjas'
 wb_project_name = 'WP_CELL_ID-4x_density'
 artifact_name = 'TFRECORD-4x_density'
 ver = 'latest'
 
-# api = wandb.Api()
-# artifact = api.artifact(f'{wb_entity}/{wb_project_name}/{artifact_name}:{ver}')#, type='dataset_with_coarse_clean')
-# art_dir = artifact.download(root=os.path.join(WB_DIR, artifact_name))
+api = wandb.Api()
+artifact = api.artifact(f'{wb_entity}/{wb_project_name}/{artifact_name}:{ver}')#, type='dataset_with_coarse_clean')
+art_dir = artifact.download(root=os.path.join(WB_DIR, artifact_name))
 
 art_dir = os.path.join(WB_DIR, artifact_name)
 file_tables = glob.glob(os.path.join(art_dir, "*.csv"))
@@ -65,7 +66,7 @@ nrepeat = None
 #                                batch_size=train_batch_size)
 
 
-from functools import *
+
 density_loader  = partial(DensityData2D,
                           nchannel_in_data=nchannel_in_data,
                         patch_shape=patch_shape,
@@ -85,7 +86,7 @@ density_loader  = partial(DensityData2D,
 
 
 #%%
-import math
+
 
 class TFDataset(torch.utils.data.IterableDataset):
     def __init__(self, loader, list_tfrs, start, end, feat_codes={'X': 'brt', 'Y': 'density'}):
@@ -105,8 +106,8 @@ class TFDataset(torch.utils.data.IterableDataset):
         return subloader.load_data().as_numpy_iterator()
 
 
-train_tfr_list =sorted(file_list)[:2]
-ds = TFDataset(density_loader, train_tfr_list, start=0, end=len(train_tfr_list))
+# train_tfr_list =sorted(file_list)[:2]
+# ds = TFDataset(density_loader, train_tfr_list, start=0, end=len(train_tfr_list))
 
 # for i, dat in enumerate(iter(ds)):
 #     print(i)
@@ -132,11 +133,3 @@ def worker_init_fn(worker_id):
 # Mult-process loading with the custom `worker_init_fn`
 # Worker 0 fetched [3, 4].  Worker 1 fetched [5, 6].
 xx=list(torch.utils.data.DataLoader(ds, num_workers=2, batch_size=2, worker_init_fn=worker_init_fn, pin_memory=True))
-
-
-#%%
-import torch.distributed as dist
-dist.is_available()
-num_replicas = dist.get_world_size()
-sampler = DistributedSampler(dataset)
-
