@@ -15,6 +15,9 @@ file_list = [glob.glob(os.path.join(data_path, '*-HIGH.tfr')),
              glob.glob(os.path.join(data_path, '*-EDGE.tfr'))]
 
 
+
+# new_data_path = Path('/media/slee/DATA1/DL/data/TFRECORD-4x_density/') / 'rechunk'
+new_data_path = Path('/home/slee_cellinobio_com/dl-data1/data/TFRECORD-4x_density/') / 'rechunk'
 ntest =  4
 
 tr_tfr_list, test_tfr_list = [], []
@@ -22,18 +25,18 @@ for list1 in file_list:
     tr_tfr_list.extend(list1[:-ntest])
     test_tfr_list.extend(list1[-ntest:])
 
-# random.seed(10)
-# random.shuffle(tr_tfr_list)
-# random.shuffle(test_tfr_list)
 
-new_data_path = Path('/media/slee/DATA1/DL/data/TFRECORD-4x_density/') / 'rechunk'
+list1 = [x.split('/')[-1] for x in tr_tfr_list]
+list1 = sorted(list1)
+tr_tfr_list = [os.path.join(data_path, x) for x in list1]
+
 if not os.path.exists(str(new_data_path)): 
     os.makedirs(str(new_data_path))
     
 train_data_fntempl = str(new_data_path / 'train')
 test_data_fntempl = str(new_data_path / 'test')
 
-tfr_loader1 = density_loader(tr_tfr_list)
+tfr_loader1 = density_original_loader(tr_tfr_list)
 nchunk1, last_chunk_sample1 = rechunk_tfrecords(tfr_loader1, train_data_fntempl, 500, write_tfrinfo=True)
 
 tfr_loader2 = density_original_loader(test_tfr_list)
@@ -49,13 +52,14 @@ nchunk2, last_chunk_sample2 = rechunk_tfrecords(tfr_loader2, test_data_fntempl, 
 
 #%% 
 ##################################################
+## validating new tfrecords 
 
-import tensorflow as tf
-from cellino_tfdata_loader import new_density_loader
+# import tensorflow as tf
+# from cellino_tfdata_loader import new_density_loader
 
 
-x = new_density_loader(["test_0.tfr"])
-x = x.load_data().as_numpy_iterator()
+# x = new_density_loader(["test_0.tfr"])
+# x = x.load_data().as_numpy_iterator()
 
 # def drop_tfr_name(data):
 #     out_data = dict()

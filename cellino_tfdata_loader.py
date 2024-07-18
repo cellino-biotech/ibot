@@ -21,9 +21,9 @@ import torch.nn as nn
 from helpers import cellinoTFRreader
 
 
-# WB_DIR = 'mnt/disks/dl-data1/wandb'
+WB_DIR = 'mnt/disks/dl-data1/wandb'
 # WB_DIR = '/Users/sangkyunlee/Cellino/DL/data/wandb'
-WB_DIR = '/media/slee/DATA1/DL/data/wandb'
+# WB_DIR = '/media/slee/DATA1/DL/data/wandb'
 wb_entity = 'cellino-ml-ninjas'
 wb_project_name = 'WP_CELL_ID-4x_density'
 artifact_name = 'TFRECORD-4x_density'
