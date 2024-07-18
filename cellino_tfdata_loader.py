@@ -15,15 +15,18 @@ import tensorflow as tf
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-
+import socket
 
 # from cellino_utils.density_data2d import DensityData2D
 from helpers import cellinoTFRreader
+hostname = socket.gethostname()
 
-
-WB_DIR = 'mnt/disks/dl-data1/wandb'
+# 
 # WB_DIR = '/Users/sangkyunlee/Cellino/DL/data/wandb'
-# WB_DIR = '/media/slee/DATA1/DL/data/wandb'
+if hostname == 'cellinodl':
+    WB_DIR = '/media/slee/DATA1/DL/data/wandb'
+elif hostname == 'improc-test-1-gpu':
+    WB_DIR = 'mnt/disks/dl-data1/wandb'
 wb_entity = 'cellino-ml-ninjas'
 wb_project_name = 'WP_CELL_ID-4x_density'
 artifact_name = 'TFRECORD-4x_density'
@@ -387,6 +390,12 @@ class Mask:
         return data
 
 
+def drop_feature(data, feat_name):
+    out_data = dict()
+    for key, val in data.items():
+        if key != feat_name:
+            out_data[key] = val
+    return out_data
 
 
 # On each spawned worker
