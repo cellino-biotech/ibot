@@ -192,7 +192,7 @@ def train_ibot(args):
 
     # cellino tfdata loader
     file_list = glob.glob(os.path.join(args.data_path, '*.tfr'))
-    train_tfr_list = sorted(file_list)[:6]
+    train_tfr_list = sorted(file_list)[:100]
     nslice = args.global_crops_number
     image_name_list = [str(i) for i in range(nslice)]
     fcn_list = [partial(drop_feature, feat_name='tfr_name'),
@@ -200,7 +200,7 @@ def train_ibot(args):
                 Mask(args.patch_size, 0.3, 0, (0.3, 1/0.3), image_name_list, 'block')
                 ]
 
-    ds = TFRecords(new_density_loader, train_tfr_list, nsample_per_file=100, process_fcn_list=fcn_list)
+    ds = TFRecords(new_density_loader, train_tfr_list, nsample_per_file=500, process_fcn_list=fcn_list)
     data_loader = torch.utils.data.DataLoader(ds, batch_size=10, pin_memory=True)
 
     # ============ building student and teacher networks ... ============
