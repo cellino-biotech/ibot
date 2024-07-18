@@ -2,7 +2,7 @@
 import os
 import glob
 from pathlib import Path
-
+import random
 from cellino_tfdata_loader import WB_DIR, rechunk_tfrecords, density_loader
 
 
@@ -22,6 +22,9 @@ for list1 in file_list:
     tr_tfr_list.extend(list1[:-ntest])
     test_tfr_list.extend(list1[-ntest:])
 
+random.seed(10)
+random.shuffle(tr_tfr_list)
+random.shuffle(test_tfr_list)
 
 new_data_path = Path('/media/slee/DATA1/DL/data/TFRECORD-4x_density/') / 'rechunk'
 if not os.path.exists(str(new_data_path)): 
