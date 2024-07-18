@@ -4,7 +4,7 @@ import random
 import glob
 import numpy as np
 import pandas as pd
-
+import copy
 from functools import *
 import timeit
 import time
@@ -17,7 +17,9 @@ import torch.distributed as dist
 import torch.nn as nn
 
 
-from cellino_utils.density_data2d import DensityData2D
+# from cellino_utils.density_data2d import DensityData2D
+from helpers import cellinoTFRreader
+
 
 # WB_DIR = 'mnt/disks/dl-data1/wandb'
 # WB_DIR = '/Users/sangkyunlee/Cellino/DL/data/wandb'
@@ -58,24 +60,44 @@ cutoff_overgrown = None
 cutoff_empty = None
 nrepeat = None
 
+DEN_FEAT_SHAPE = [(nchannel_in_data,) + patch_shape, (1,) + patch_shape, (1,)]
+DEN_FEAT_NAME = ['brt', 'density', 'patch_index']
+DEN_FEAT_DATA_TYPE = [tf.float32, tf.float32, tf.int64]
 
 
 
+# density_loader  = partial(DensityData2D,
+#                           nchannel_in_data=nchannel_in_data,
+#                         patch_shape=patch_shape,
+#                         dataready=dataready,
+#                         multiscale_list=multiscale_list,
+#                         density_scale=density_scale,
+#                         cutoff_overgrown=cutoff_overgrown,
+#                         cutoff_empty=cutoff_empty,
+#                         nrepeat=nrepeat,
+#                         zindices=z_indices,
+#                         shuffle_buffer_size=shuffle_buffer_size,
+#                         drop_remainder=drop_remainder,
+#                         batch_size=train_batch_size)
 
-density_loader  = partial(DensityData2D,
-                          nchannel_in_data=nchannel_in_data,
-                        patch_shape=patch_shape,
-                        dataready=dataready,
-                        multiscale_list=multiscale_list,
-                        density_scale=density_scale,
-                        cutoff_overgrown=cutoff_overgrown,
-                        cutoff_empty=cutoff_empty,
-                        nrepeat=nrepeat,
-                        zindices=z_indices,
-                        shuffle_buffer_size=shuffle_buffer_size,
-                        drop_remainder=drop_remainder,
-                        batch_size=train_batch_size)
 
+
+density_original_loader = partial(cellinoTFRreader,
+                                  features_shape=DEN_FEAT_SHAPE,
+                                  features_name=DEN_FEAT_NAME,
+                                  features_data_type=DEN_FEAT_DATA_TYPE)
+                                  
+
+new_density_loader = partial(cellinoTFRreader,
+                              features_shape=DEN_FEAT_SHAPE + [None],
+                                  features_name=DEN_FEAT_NAME +['tfr_name'],
+                                  features_data_type=DEN_FEAT_DATA_TYPE + [tf.string])
+
+def _to_feature_bytes(value):
+  """Returns a bytes_list from a string / byte."""
+  if isinstance(value, type(tf.constant(0))):
+    value = value.numpy() # BytesList won't unpack a string from an EagerTensor.
+  return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 def _to_feature_float(arr):
     if isinstance(arr, (float, np.ndarray)):
@@ -109,10 +131,13 @@ def convert_np2tfr(numpy_data_dict):
     return out
 
 
-def rechunk_tfrecords(tfr_loader, newtfr_name, nchunk=100):
+def rechunk_tfrecords(tfr_loader, newtfr_name, nchunk=10, write_tfrinfo=False):
     dataset = tfr_loader.load_data().as_numpy_iterator()
+    tfr_list = getattr(tfr_loader, 'tfr_name_list') if hasattr(tfr_loader, 'tfr_name_list') else []
 
     tfwriter = None
+    tfr_index = -1
+    pre_patch_index = 0
     for i, np_data in enumerate(dataset):
         if i % nchunk == 0:
             chunk_start = True
@@ -125,6 +150,20 @@ def rechunk_tfrecords(tfr_loader, newtfr_name, nchunk=100):
             tfwriter = tf.io.TFRecordWriter(newtfr_chunk)
 
         feats = convert_np2tfr(np_data)
+        if write_tfrinfo and\
+            isinstance(np_data, dict) and\
+            'patch_index' in np_data.keys():
+
+            patch_index = np_data['patch_index']
+            if patch_index == 0:
+                tfr_index += 1
+            else:
+                assert patch_index > pre_patch_index,\
+                    "ONLY ALLOWED IF patch_index is incremental within a TFR and start from 0."
+            fn = tfr_list[tfr_index].split('/')[-1]
+            feats['tfr_name'] = _to_feature_bytes(fn.encode('utf-8'))
+            pre_patch_index = patch_index
+
         features = tf.train.Features(feature=feats)
         record_bytes = tf.train.Example(features=features).SerializeToString()
         tfwriter.write(record_bytes)
@@ -178,10 +217,10 @@ class TFRecords(torch.utils.data.IterableDataset):
         if len(self.process_fcn_list) > 0:
             for fcn in self.process_fcn_list:
                 subdata = subdata.map(fcn)
+        if self.shuffle_buffer_size > 0:
+            subdata = subdata.shuffle(self.shuffle_buffer_size)
+        return subdata.as_numpy_iterator()
 
-        return subdata.shuffle(self.shuffle_buffer_size).as_numpy_iterator()
-
-    
     def __len__(self):
         return self.nsample
 

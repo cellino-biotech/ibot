@@ -3,7 +3,7 @@ import os
 import glob
 from pathlib import Path
 import random
-from cellino_tfdata_loader import WB_DIR, rechunk_tfrecords, density_loader
+from cellino_tfdata_loader import WB_DIR, rechunk_tfrecords, density_original_loader
 
 
 
@@ -22,9 +22,9 @@ for list1 in file_list:
     tr_tfr_list.extend(list1[:-ntest])
     test_tfr_list.extend(list1[-ntest:])
 
-random.seed(10)
-random.shuffle(tr_tfr_list)
-random.shuffle(test_tfr_list)
+# random.seed(10)
+# random.shuffle(tr_tfr_list)
+# random.shuffle(test_tfr_list)
 
 new_data_path = Path('/media/slee/DATA1/DL/data/TFRECORD-4x_density/') / 'rechunk'
 if not os.path.exists(str(new_data_path)): 
@@ -34,13 +34,45 @@ train_data_fntempl = str(new_data_path / 'train')
 test_data_fntempl = str(new_data_path / 'test')
 
 tfr_loader1 = density_loader(tr_tfr_list)
-nchunk1, last_chunk_sample1 = rechunk_tfrecords(tfr_loader1, train_data_fntempl, 500)
+nchunk1, last_chunk_sample1 = rechunk_tfrecords(tfr_loader1, train_data_fntempl, 500, write_tfrinfo=True)
 
-tfr_loader2 = density_loader(test_tfr_list)
-nchunk2, last_chunk_sample2 = rechunk_tfrecords(tfr_loader2, test_data_fntempl, 500)
+tfr_loader2 = density_original_loader(test_tfr_list)
+nchunk2, last_chunk_sample2 = rechunk_tfrecords(tfr_loader2, test_data_fntempl, 500, write_tfrinfo=True)
 
 
-# tfr_loader = density_loader(['test_3.tfr'])
+# tfr_loader = density_loader([tr_tfr_list[0]])
 
 # for i, x in enumerate(tfr_loader.load_data().as_numpy_iterator()):
 #     print(i)
+
+
+
+#%% 
+##################################################
+
+import tensorflow as tf
+from cellino_tfdata_loader import new_density_loader
+
+
+x = new_density_loader(["test_0.tfr"])
+x = x.load_data().as_numpy_iterator()
+
+# def drop_tfr_name(data):
+#     out_data = dict()
+#     for key, val in data.items():
+#         if key != 'tfr_name':
+#             out_data[key] = val
+#     return out_data
+
+# from cellino_tfdata_loader import TFRecords
+# import torch
+# ds = TFRecords(new_density_loader, ["test_0.tfr"], nsample_per_file=100, process_fcn_list=[drop_tfr_name], shuffle_buffer_size=0)
+# data_loader = torch.utils.data.DataLoader(ds, batch_size=24, pin_memory=True)
+
+
+# for i, batch in enumerate(data_loader):
+#     if i == 0:
+#         break
+#     print(i)
+
+
