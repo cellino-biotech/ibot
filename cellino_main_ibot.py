@@ -6,6 +6,7 @@ import datetime
 import time
 import math
 import json
+import random
 import glob
 import numpy as np
 import utils
@@ -27,7 +28,7 @@ from loader import ImageFolderMask
 # from evaluation.unsupervised.unsup_cls import eval_pred
 
 
-from cellino_tfdata_loader import TFRecords, new_density_loader, Zslice, Mask, drop_feature
+from cellino_tfdata_loader import TFRecords, density_loader, Zslice, Mask
 
 
 def get_args_parser():
@@ -107,9 +108,14 @@ def get_args_parser():
     parser.add_argument('--clip_grad', type=float, default=3.0, help="""Maximal parameter
         gradient norm if using gradient clipping. Clipping with norm .3 ~ 1.0 can
         help optimization for larger ViT architectures. 0 for disabling.""")
-    parser.add_argument('--batch_size_per_gpu', default=128, type=int,
+    
+
+    parser.add_argument('--batch_size_per_gpu', default=300, type=int,
         help='Per-GPU batch-size : number of distinct images loaded on one GPU.')
-    parser.add_argument('--epochs', default=100, type=int, help='Number of epochs of training.')
+    
+
+
+    parser.add_argument('--epochs', default=500, type=int, help='Number of epochs of training.')
     parser.add_argument('--freeze_last_layer', default=1, type=int, help="""Number of epochs
         during which we keep the output layer fixed. Typically doing so during
         the first epoch helps training. Try increasing this value if the loss does not decrease.""")
@@ -143,13 +149,13 @@ def get_args_parser():
     parser.add_argument('--data_path', default='/path/to/imagenet/train/', type=str,
         help='Please specify path to the ImageNet training data.')
     
-    parser.add_argument('--output_dir', default=".", type=str, help='Path to save logs and checkpoints.')
+    parser.add_argument('--output_dir', default="./output_dir", type=str, help='Path to save logs and checkpoints.')
     parser.add_argument('--saveckp_freq', default=40, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
     parser.add_argument('--num_workers', default=1, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
-    parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
+    parser.add_argument("--local-rank", default=0, type=int, help="Please ignore and do not set this argument.")
     return parser
 
 def train_ibot(args):
@@ -160,50 +166,24 @@ def train_ibot(args):
     cudnn.benchmark = True
 
     # ============ preparing data ... ============
-    
-    # transform = DataAugmentationiBOT(
-    #     args.global_crops_scale,
-    #     args.local_crops_scale,
-    #     args.global_crops_number,
-    #     args.local_crops_number,
-    # )
-    # pred_size = args.patch_size * 8 if 'swin' in args.arch else args.patch_size
-    # dataset = ImageFolderMask(
-    #     args.data_path, 
-    #     transform=transform,
-    #     patch_size=pred_size,
-    #     pred_ratio=args.pred_ratio,
-    #     pred_ratio_var=args.pred_ratio_var,
-    #     pred_aspect_ratio=(0.3, 1/0.3),
-    #     pred_shape=args.pred_shape,
-    #     pred_start_epoch=args.pred_start_epoch)
-    
-    # sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True)
-    # data_loader = torch.utils.data.DataLoader(
-    #     dataset,
-    #     sampler=sampler,
-    #     batch_size=args.batch_size_per_gpu,
-    #     num_workers=args.num_workers,
-    #     pin_memory=True,
-    #     drop_last=True
-    # )
-    # print(f"Data loaded: there are {len(dataset)} images.")
-
 
     # cellino tfdata loader
-    file_list = glob.glob(os.path.join(args.data_path, '*.tfr'))
-    train_tfr_list = sorted(file_list)[:100]
+    file_list = glob.glob(os.path.join(args.data_path, 'train*.tfr'))
+    train_tfr_list = file_list[:120]
+    random.shuffle(train_tfr_list)
     nslice = args.global_crops_number
     image_name_list = [str(i) for i in range(nslice)]
-    fcn_list = [partial(drop_feature, feat_name='tfr_name'),
+    fcn_list = [
                 Zslice(0, 4, 2, nslice),
                 Mask(args.patch_size, 0.3, 0, (0.3, 1/0.3), image_name_list, 'block')
                 ]
 
-    ds = TFRecords(new_density_loader, train_tfr_list, nsample_per_file=500, process_fcn_list=fcn_list)
-    data_loader = torch.utils.data.DataLoader(ds, batch_size=10, pin_memory=True)
-
+    ds = TFRecords(density_loader, train_tfr_list, nsample_per_file=500, shuffle_buffer_size=2000, process_fcn_list=fcn_list)
+    data_loader = torch.utils.data.DataLoader(ds, batch_size=args.batch_size_per_gpu, pin_memory=False)
+    
+    print(f"rank: {args.gpu}, {ds.list_files[ds.start]}")
     # ============ building student and teacher networks ... ============
+    torch.cuda.set_device(args.gpu)
     # we changed the name DeiT-S for ViT-S to avoid confusions
     args.arch = args.arch.replace("deit", "vit")
     # if the network is of hierechical features (i.e. swin_tiny, swin_small, swin_base)
@@ -287,7 +267,8 @@ def train_ibot(args):
     for p in teacher.parameters():
         p.requires_grad = False
     print(f"Student and Teacher are built: they are both {args.arch} network.")
-
+    if args.gpu ==1:
+        print(student)
     # ============ preparing loss ... ============
     same_dim = args.shared_head or args.shared_head_teacher
     ibot_loss = iBOTLoss(
@@ -304,7 +285,7 @@ def train_ibot(args):
         lambda1=args.lambda1,
         lambda2=args.lambda2,
         mim_start_epoch=args.pred_start_epoch,
-    ).cuda()
+    ).cuda(args.gpu)
 
     if utils.is_main_process(): # Tensorboard configuration
         local_runs = os.path.join(args.output_dir, 'tf_logs')
@@ -416,6 +397,10 @@ def train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss, data_loade
     params_k = [param_k for name_k, param_k in zip(names_k, params_k) if name_k in names_common]
 
     pred_labels, real_labels = [], []
+
+    if args.gpu ==1:
+        print(data_loader)
+
     for it, batch_data in enumerate(metric_logger.log_every(data_loader, 10, header)):
         if isinstance(batch_data, dict): # to adapt cellino TFRecord
             images = [batch_data[f'{img_i}'] for img_i in range(ncrops)]
@@ -431,8 +416,9 @@ def train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss, data_loade
                 param_group["weight_decay"] = wd_schedule[it]
 
         # move images to gpu
-        images = [im.cuda(non_blocking=True) for im in images]
-        masks = [msk.cuda(non_blocking=True) for msk in masks]        
+        # torch.cuda.set_device(args.gpu)
+        images = [im.cuda(args.gpu, non_blocking=True) for im in images]
+        masks = [msk.cuda(args.gpu, non_blocking=True) for msk in masks]        
         
         with torch.cuda.amp.autocast(fp16_scaler is not None):
             # get global views
@@ -460,6 +446,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss, data_loade
         pred_labels.append(pred1)
         # real_labels.append(utils.concat_all_gather(labels.to(pred1.device)))
 
+        # print(f"rank: {args.gpu}, backward start")
         # student update
         optimizer.zero_grad()
         param_norms = None
@@ -477,7 +464,9 @@ def train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss, data_loade
                 param_norms = utils.clip_gradients(student, args.clip_grad)
             utils.cancel_gradients_last_layer(epoch, student,
                                               args.freeze_last_layer)
+            # print(f"rank: {args.gpu}, step start")
             fp16_scaler.step(optimizer)
+            # print(f"rank: {args.gpu}, update start")
             fp16_scaler.update()
 
         # EMA update for the teacher
@@ -487,6 +476,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss, data_loade
                 param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
         # logging
+        # print(f"rank: {args.gpu}, logging start")
         torch.cuda.synchronize()
         metric_logger.update(loss=loss.item())
         for key, value in all_loss.items():
@@ -494,7 +484,10 @@ def train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss, data_loade
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(wd=optimizer.param_groups[0]["weight_decay"])
         metric_logger.update(acc=acc)
+        # print(f"rank: {args.gpu}, it:{it}, logging end")
 
+
+    print(f"rank: {int(os.environ['LOCAL_RANK'])}/{int(os.environ['WORLD_SIZE'])}, pred_labels")
     pred_labels = torch.cat(pred_labels).cpu().detach().numpy()
     # real_labels = torch.cat(real_labels).cpu().detach().numpy()
     # nmi, ari, fscore, adjacc = eval_pred(real_labels, pred_labels, calc_acc=False)
@@ -656,5 +649,8 @@ class DataAugmentationiBOT(object):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('iBOT', parents=[get_args_parser()])
     args = parser.parse_args()
+    print(args)
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     train_ibot(args)
+
+# python -m torch.distributed.launch --nproc_per_node=2 cellino_main_ibot.py --arch vit_tiny --data_path "/home/slee_cellinobio_com/dl-data1/data/TFRECORD-4x_density/rechunk"

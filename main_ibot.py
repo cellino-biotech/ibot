@@ -106,7 +106,7 @@ def get_args_parser():
     parser.add_argument('--clip_grad', type=float, default=3.0, help="""Maximal parameter
         gradient norm if using gradient clipping. Clipping with norm .3 ~ 1.0 can
         help optimization for larger ViT architectures. 0 for disabling.""")
-    parser.add_argument('--batch_size_per_gpu', default=128, type=int,
+    parser.add_argument('--batch_size_per_gpu', default=100, type=int,
         help='Per-GPU batch-size : number of distinct images loaded on one GPU.')
     parser.add_argument('--epochs', default=100, type=int, help='Number of epochs of training.')
     parser.add_argument('--freeze_last_layer', default=1, type=int, help="""Number of epochs
@@ -147,7 +147,7 @@ def get_args_parser():
     parser.add_argument('--num_workers', default=10, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
-    parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
+    parser.add_argument("--local-rank", default=0, type=int, help="Please ignore and do not set this argument.")
     return parser
 
 def train_ibot(args):
@@ -184,6 +184,8 @@ def train_ibot(args):
         drop_last=True
     )
     print(f"Data loaded: there are {len(dataset)} images.")
+    if args.gpu ==1:
+        print(data_loader)
 
     # ============ building student and teacher networks ... ============
     # we changed the name DeiT-S for ViT-S to avoid confusions
@@ -626,3 +628,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     train_ibot(args)
+
+# python -m torch.distributed.launch --nproc_per_node=2 main_ibot.py --arch vit_tiny --data_path "/home/slee_cellinobio_com/dl-data1/data/tiny-imagenet-200/train"

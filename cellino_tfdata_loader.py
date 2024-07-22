@@ -26,75 +26,54 @@ hostname = socket.gethostname()
 if hostname == 'cellinodl':
     WB_DIR = '/media/slee/DATA1/DL/data/wandb'
 elif hostname == 'improc-test-1-gpu':
-    WB_DIR = 'mnt/disks/dl-data1/wandb'
+    WB_DIR = '/mnt/disks/dl-data1/wandb'
 wb_entity = 'cellino-ml-ninjas'
 wb_project_name = 'WP_CELL_ID-4x_density'
 artifact_name = 'TFRECORD-4x_density'
 ver = 'latest'
 
+
+#%% To download the original density data
+
 # api = wandb.Api()
 # artifact = api.artifact(f'{wb_entity}/{wb_project_name}/{artifact_name}:{ver}')#, type='dataset_with_coarse_clean')
 # art_dir = artifact.download(root=os.path.join(WB_DIR, artifact_name))
 
-art_dir = os.path.join(WB_DIR, artifact_name)
-file_tables = glob.glob(os.path.join(art_dir, "*.csv"))
+# art_dir = os.path.join(WB_DIR, artifact_name)
+# file_tables = glob.glob(os.path.join(art_dir, "*.csv"))
 
-if os.path.exists(file_tables[0]):
-    data_info = pd.read_csv(file_tables[0])
+# if os.path.exists(file_tables[0]):
+#     data_info = pd.read_csv(file_tables[0])
 
-
-file_list = glob.glob(os.path.join(art_dir, '*-EDGE.tfr'))
-
-
+# file_list = glob.glob(os.path.join(art_dir, '*-EDGE.tfr'))
+# train_tfr_list =sorted(file_list)[:10]
 
 
-train_tfr_list =sorted(file_list)[:10]
 nchannel_in_data = 4
 patch_shape = (256, 256)
 dataready = False
-#dummy values
-z_indices = None #[0]
-shuffle_buffer_size = None #256
-drop_remainder = None #False
-train_batch_size = None #10
-multiscale_list = [] #[0]
-density_scale = None
-cutoff_overgrown = None
-cutoff_empty = None
-nrepeat = None
-
-DEN_FEAT_SHAPE = [(nchannel_in_data,) + patch_shape, (1,) + patch_shape, (1,)]
-DEN_FEAT_NAME = ['brt', 'density', 'patch_index']
-DEN_FEAT_DATA_TYPE = [tf.float32, tf.float32, tf.int64]
 
 
-
-# density_loader  = partial(DensityData2D,
-#                           nchannel_in_data=nchannel_in_data,
-#                         patch_shape=patch_shape,
-#                         dataready=dataready,
-#                         multiscale_list=multiscale_list,
-#                         density_scale=density_scale,
-#                         cutoff_overgrown=cutoff_overgrown,
-#                         cutoff_empty=cutoff_empty,
-#                         nrepeat=nrepeat,
-#                         zindices=z_indices,
-#                         shuffle_buffer_size=shuffle_buffer_size,
-#                         drop_remainder=drop_remainder,
-#                         batch_size=train_batch_size)
+# DEN_FEAT_SHAPE = [(nchannel_in_data,) + patch_shape, (1,) + patch_shape, (1,)]
+# DEN_FEAT_NAME = ['brt', 'density', 'patch_index']
+# DEN_FEAT_DATA_TYPE = [tf.float32, tf.float32, tf.int64]
 
 
+DEN_FEAT_SHAPE = [(nchannel_in_data,) + patch_shape,  (1,)]
+DEN_FEAT_NAME = ['brt',  'patch_index']
+DEN_FEAT_DATA_TYPE = [tf.float32,  tf.int64]
 
-density_original_loader = partial(cellinoTFRreader,
+
+density_loader = partial(cellinoTFRreader,
                                   features_shape=DEN_FEAT_SHAPE,
                                   features_name=DEN_FEAT_NAME,
                                   features_data_type=DEN_FEAT_DATA_TYPE)
                                   
 
-new_density_loader = partial(cellinoTFRreader,
-                              features_shape=DEN_FEAT_SHAPE + [None],
-                                  features_name=DEN_FEAT_NAME +['tfr_name'],
-                                  features_data_type=DEN_FEAT_DATA_TYPE + [tf.string])
+# new_density_loader = partial(cellinoTFRreader,
+#                               features_shape=DEN_FEAT_SHAPE + [None],
+#                                   features_name=DEN_FEAT_NAME +['tfr_name'],
+#                                   features_data_type=DEN_FEAT_DATA_TYPE + [tf.string])
 
 def _to_feature_bytes(value):
   """Returns a bytes_list from a string / byte."""
@@ -187,21 +166,21 @@ class TFRecords(torch.utils.data.IterableDataset):
     NOTE: all the TFRecords should have the same number of samples.
 
     """
-    def __init__(self, loader, list_tfrs,  nsample_per_file, process_fcn_list=[], shuffle_buffer_size=512, feat_codes={'X': 'brt', 'Y': 'density'}):
+    def __init__(self, loader, list_tfrs,  nsample_per_file, process_fcn_list=[], shuffle_buffer_size=100, feat_codes={'X': 'brt', 'Y': 'density'}):
         super(TFRecords).__init__()
 
         overall_start = 0
         overall_end = len(list_tfrs)
         if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-            worker_id = int(os.environ['RANK'])
-            num_workers = int(os.environ['WORLD_SIZE'])
+            self.worker_id = int(os.environ['RANK'])
+            self.num_workers = int(os.environ['WORLD_SIZE'])
         else:
-            worker_id = 0
-            num_workers = 1
+            self.worker_id = 0
+            self.num_workers = 1
             print("Failed to load world_size and/or rank from os.environ and set a single data loader ")
         
-        per_worker = int(math.ceil((overall_end - overall_start) / float(num_workers)))
-        start = overall_start + worker_id * per_worker
+        per_worker = int(math.ceil((overall_end - overall_start) / float(self.num_workers)))
+        start = overall_start + self.worker_id * per_worker
         end = min(start + per_worker, overall_end)
         assert end > start, "this example code only works with end >= start"
         self.start = start
@@ -215,13 +194,19 @@ class TFRecords(torch.utils.data.IterableDataset):
         self.process_fcn_list = process_fcn_list
         # self.sample_count = 0
     def __iter__(self):
+        # list_cpu = tf.config.list_physical_devices('CPU')
+        # # assert len(list_cpu) > 0
+        # physical_devices = tf.config.list_physical_devices('GPU')
+        # tf.config.experimental.set_memory_growth(physical_devices[self.worker_id], True)
 
-        subdata = self.loader(self.list_files[self.start:self.end]).load_data()
-        if len(self.process_fcn_list) > 0:
-            for fcn in self.process_fcn_list:
-                subdata = subdata.map(fcn)
-        if self.shuffle_buffer_size > 0:
-            subdata = subdata.shuffle(self.shuffle_buffer_size)
+        #with tf.device(f'/device:GPU:{self.worker_id}'):
+        with tf.device(f'/device:CPU:0'):
+            subdata = self.loader(self.list_files[self.start:self.end]).load_data()
+            if len(self.process_fcn_list) > 0:
+                for fcn in self.process_fcn_list:
+                    subdata = subdata.map(fcn)
+            if self.shuffle_buffer_size > 0:
+                subdata = subdata.shuffle(self.shuffle_buffer_size)
         return subdata.as_numpy_iterator()
 
     def __len__(self):
@@ -243,6 +228,7 @@ class Zslice(object):
 
         self.channel_first = channel_first
         self.img_code = img_code
+    
 
     def __call__(self, data):
 
@@ -276,15 +262,13 @@ class Zslice(object):
         # x = int(random.uniform(100, 200))
         # y = int(random.uniform(100, 200))
         # out_stack = [tf.slice(img_stack, begin=[i,0,0], size=[1, x, y]) for i in indices[:self.nsample]]
-
+        outdata = dict()
         for i, ind in enumerate(indices[:self.nsample]):
             x = 128#int(random.uniform(100, 200))
             y = 128#int(random.uniform(100, 200))
-            data[f'{i}'] = tf.slice(img_stack, begin=[ind, 0, 0], size=[1, x, y])
+            outdata[f'{i}'] = tf.slice(img_stack, begin=[ind, 0, 0], size=[1, x, y])
         # data['zslice'] = out_stack
-        return data
-
-
+        return outdata
 
 
 class Mask:
@@ -327,10 +311,10 @@ class Mask:
         self.epoch = epoch
 
     def __call__(self, data):
-        print(self.image_name_list)
+        # print(self.image_name_list)
 
         for ikey in self.image_name_list:
-            print('data_key: ', ikey)
+            # print('data_key: ', ikey)
             img = data[ikey]
             H, W = img.shape[1] // self.psz, img.shape[2] // self.psz
 
@@ -388,6 +372,158 @@ class Mask:
             mask_key = 'msk_' + ikey
             data[mask_key] = mask
         return data
+    
+
+
+# class npZslice(object):
+#     def __init__(self, istart, iend, nsample, min_slice_gap, max_slice_gap=None, channel_first=True, img_code={'X':'brt'}):
+#         self.istart = istart
+#         self.iend = iend
+#         self.min_slice_gap = min_slice_gap
+#         if not max_slice_gap:
+#             self.max_slice_gap = min_slice_gap
+#         else:
+#             self.max_slice_gap = max_slice_gap
+
+#         max_indices = np.arange(self.istart, self.iend, self.min_slice_gap)
+#         assert len(max_indices) <= nsample, f"we can only sample {len(max_indices)}." 
+#         self.nsample = nsample
+
+#         self.channel_first = channel_first
+#         self.img_code = img_code
+    
+
+#     def __call__(self, img_stack):
+
+#         if not self.channel_first:
+#             img_stack = np.transpose(img_stack, (2, 0, 1))
+        
+#         nslice = len(img_stack)
+#         assert nslice <= (self.iend - self.istart), "search range error."
+
+
+#         indices = []
+#         i = 0
+#         while len(indices) < self.nsample:
+#             slice_step = int(random.uniform(self.min_slice_gap, self.max_slice_gap))
+
+#             istart = int(random.uniform(self.istart, self.iend - slice_step - 1))
+#             iend = min(self.iend, nslice)
+#             indices = np.arange(istart, iend, slice_step)
+#             i += 1
+#             if i>100:
+#                 print("failed to load proper indices!")
+#                 break
+
+
+
+#         slice_data = []
+#         for i, ind in enumerate(indices[:self.nsample]):
+#             x = 128#int(random.uniform(100, 200))
+#             y = 128#int(random.uniform(100, 200))
+#             dat = img_stack[:,ind, :y, :x]
+#             slice_data.append(dat)
+#         return slice_data
+    
+
+# class sliceMask:
+#     """ Adaptation of iBOT's ImageFolderMask class to load Cellino TFRecords"""
+#     def __init__(self, patch_size, pred_ratio, pred_ratio_var, pred_aspect_ratio, 
+#                  image_name_list,
+#                  pred_shape='block', pred_start_epoch=0):
+        
+#         self.psz = patch_size
+#         self.pred_ratio = pred_ratio[0] if isinstance(pred_ratio, list) and \
+#             len(pred_ratio) == 1 else pred_ratio
+#         self.pred_ratio_var = pred_ratio_var[0] if isinstance(pred_ratio_var, list) and \
+#             len(pred_ratio_var) == 1 else pred_ratio_var
+#         if isinstance(self.pred_ratio, list) and not isinstance(self.pred_ratio_var, list):
+#             self.pred_ratio_var = [self.pred_ratio_var] * len(self.pred_ratio)
+#         self.log_aspect_ratio = tuple(map(lambda x: math.log(x), pred_aspect_ratio))
+#         self.pred_shape = pred_shape
+#         self.pred_start_epoch = pred_start_epoch
+#         self.image_name_list = image_name_list
+
+#     def get_pred_ratio(self):
+#         if hasattr(self, 'epoch') and self.epoch < self.pred_start_epoch:
+#             return 0
+
+#         if isinstance(self.pred_ratio, list):
+#             pred_ratio = []
+#             for prm, prv in zip(self.pred_ratio, self.pred_ratio_var):
+#                 assert prm >= prv
+#                 pr = random.uniform(prm - prv, prm + prv) if prv > 0 else prm
+#                 pred_ratio.append(pr)
+#             pred_ratio = random.choice(pred_ratio)
+#         else:
+#             assert self.pred_ratio >= self.pred_ratio_var
+#             pred_ratio = random.uniform(self.pred_ratio - self.pred_ratio_var, self.pred_ratio + \
+#                 self.pred_ratio_var) if self.pred_ratio_var > 0 else self.pred_ratio
+        
+#         return pred_ratio
+    
+#     def get_mask(self, img):
+#         H, W = img.shape[1] // self.psz, img.shape[2] // self.psz
+
+#         high = self.get_pred_ratio() * H * W
+
+#         if self.pred_shape == 'block':
+#             # following BEiT (https://arxiv.org/abs/2106.08254), see at
+#             # https://github.com/microsoft/unilm/blob/b94ec76c36f02fb2b0bf0dcb0b8554a2185173cd/beit/masking_generator.py#L55
+#             mask = np.zeros((H, W), dtype=bool)
+#             mask_count = 0
+#             while mask_count < high:
+#                 max_mask_patches = high - mask_count
+
+#                 delta = 0
+#                 for attempt in range(10):
+#                     low = (min(H, W) // 3) ** 2 
+#                     target_area = random.uniform(low, max_mask_patches)
+#                     aspect_ratio = math.exp(random.uniform(*self.log_aspect_ratio))
+#                     h = int(round(math.sqrt(target_area * aspect_ratio)))
+#                     w = int(round(math.sqrt(target_area / aspect_ratio)))
+#                     if w < W and h < H:
+#                         top = random.randint(0, H - h)
+#                         left = random.randint(0, W - w)
+
+#                         num_masked = mask[top: top + h, left: left + w].sum()
+#                         if 0 < h * w - num_masked <= max_mask_patches:
+#                             for i in range(top, top + h):
+#                                 for j in range(left, left + w):
+#                                     if mask[i, j] == 0:
+#                                         mask[i, j] = 1
+#                                         delta += 1
+
+#                     if delta > 0:
+#                         break
+
+#                 if delta == 0:
+#                     break
+#                 else:
+#                     mask_count += delta
+        
+#         elif self.pred_shape == 'rand':
+#             mask = np.hstack([
+#                 np.zeros(H * W - int(high)),
+#                 np.ones(int(high)),
+#             ]).astype(bool)
+#             np.random.shuffle(mask)
+#             mask = mask.reshape(H, W)
+
+#         else:
+#             # no implementation
+#             assert False
+#         return mask
+
+#     def set_epoch(self, epoch):
+#         self.epoch = epoch
+
+#     def __call__(self, dstack):
+#         outdat = []
+#         for stack in dstack:
+#             mask = self.get_mask(stack) 
+#             outdat.append(mask)
+#         return np.stack(outdat)
 
 
 def drop_feature(data, feat_name):
@@ -439,15 +575,15 @@ def worker(args):
     torch.cuda.synchronize(device=rank)
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--local-rank", type=int)
-    args = parser.parse_args()
+# if __name__ == '__main__':
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument("--local-rank", type=int)
+#     args = parser.parse_args()
     
-    # print("\n===============main==============\n")
-    # print(args)
-    # print("\n===============END OF main==============\n")
-    worker(args)
+#     # print("\n===============main==============\n")
+#     # print(args)
+#     # print("\n===============END OF main==============\n")
+#     worker(args)
 
 
 #############
