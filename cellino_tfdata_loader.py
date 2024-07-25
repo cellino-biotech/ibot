@@ -213,7 +213,7 @@ class TFRecords(torch.utils.data.IterableDataset):
         return self.nsample
 
 class Zslice(object):
-    def __init__(self, istart, iend, nsample, min_slice_gap, max_slice_gap=None, channel_first=True, img_code={'X':'brt'}):
+    def __init__(self, istart, iend, nsample, min_slice_gap, img_size, max_slice_gap=None, channel_first=True, img_code={'X':'brt'}):
         self.istart = istart
         self.iend = iend
         self.min_slice_gap = min_slice_gap
@@ -228,6 +228,7 @@ class Zslice(object):
 
         self.channel_first = channel_first
         self.img_code = img_code
+        self.img_size = img_size
     
 
     def __call__(self, data):
@@ -264,9 +265,9 @@ class Zslice(object):
         # out_stack = [tf.slice(img_stack, begin=[i,0,0], size=[1, x, y]) for i in indices[:self.nsample]]
         outdata = dict()
         for i, ind in enumerate(indices[:self.nsample]):
-            x = 128#int(random.uniform(100, 200))
-            y = 128#int(random.uniform(100, 200))
-            outdata[f'{i}'] = tf.slice(img_stack, begin=[ind, 0, 0], size=[1, x, y])
+            x = int(random.uniform(32, 32 + int(self.img_size//4)))
+            y = int(random.uniform(32, 32 + int(self.img_size//4)))
+            outdata[f'{i}'] = tf.slice(img_stack, begin=[ind, y, x], size=[1, self.img_size, self.img_size])
         # data['zslice'] = out_stack
         return outdata
 

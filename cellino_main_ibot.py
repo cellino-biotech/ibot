@@ -40,11 +40,21 @@ def get_args_parser():
                  'swin_tiny','swin_small', 'swin_base', 'swin_large'],
         help="""Name of architecture to train. For quick experiments with ViTs,
         we recommend using vit_tiny or vit_small.""")
-    parser.add_argument('--patch_size', default=16, type=int, help="""Size in pixels
+    
+
+
+    parser.add_argument('--patch_size', default=8, type=int, help="""Size in pixels
         of input square patches - default 16 (for 16x16 patches). Using smaller
         values leads to better performance but requires more memory. Applies only
         for ViTs (vit_tiny, vit_small and vit_base). If <16, we recommend disabling
         mixed precision training (--use_fp16 false) to avoid unstabilities.""")
+    
+    parser.add_argument('--img_size', default=128, type=int, help="""Size in pixels""")
+    parser.add_argument('--pred_shape', default='rand', type=str, help="""Shape of partial prediction.""")
+    parser.add_argument('--batch_size_per_gpu', default=80, type=int,
+        help='Per-GPU batch-size : number of distinct images loaded on one GPU.')
+    
+
     parser.add_argument('--window_size', default=7, type=int, help="""Size of window - default 7.
         This config is only valid for Swin Transofmer and is ignoired for vanilla ViT architectures.""")
     parser.add_argument('--out_dim', default=8192, type=int, help="""Dimensionality of
@@ -73,7 +83,7 @@ def get_args_parser():
         If a list of ratio is specified, one of them will be randomly choosed for each patch.""")
     parser.add_argument('--pred_ratio_var', default=0, type=float, nargs='+', help="""Variance of partial prediction
         ratio. Length should be indentical to the length of pred_ratio. 0 for disabling. """)
-    parser.add_argument('--pred_shape', default='block', type=str, help="""Shape of partial prediction.""")
+    
     parser.add_argument('--pred_start_epoch', default=0, type=int, help="""Start epoch to perform masked
         image prediction. We typically set this to 50 for swin transformer. (Default: 0)""")
     parser.add_argument('--lambda1', default=1.0, type=float, help="""loss weight for dino
@@ -110,12 +120,11 @@ def get_args_parser():
         help optimization for larger ViT architectures. 0 for disabling.""")
     
 
-    parser.add_argument('--batch_size_per_gpu', default=300, type=int,
-        help='Per-GPU batch-size : number of distinct images loaded on one GPU.')
+   
     
 
 
-    parser.add_argument('--epochs', default=500, type=int, help='Number of epochs of training.')
+    parser.add_argument('--epochs', default=300, type=int, help='Number of epochs of training.')
     parser.add_argument('--freeze_last_layer', default=1, type=int, help="""Number of epochs
         during which we keep the output layer fixed. Typically doing so during
         the first epoch helps training. Try increasing this value if the loss does not decrease.""")
@@ -174,8 +183,8 @@ def train_ibot(args):
     nslice = args.global_crops_number
     image_name_list = [str(i) for i in range(nslice)]
     fcn_list = [
-                Zslice(0, 4, 2, nslice),
-                Mask(args.patch_size, 0.3, 0, (0.3, 1/0.3), image_name_list, 'block')
+                Zslice(0, 4, nslice, min_slice_gap=2, img_size=args.img_size),
+                Mask(args.patch_size, 0.3, 0, (0.3, 1/0.3), image_name_list, args.pred_shape)
                 ]
 
     ds = TFRecords(density_loader, train_tfr_list, nsample_per_file=500, shuffle_buffer_size=2000, process_fcn_list=fcn_list)
@@ -207,13 +216,13 @@ def train_ibot(args):
             return_all_tokens=True,
             masked_im_modeling=args.use_masked_im_modeling,
             in_chans=1,
-            img_size=[128]
+            img_size=[args.img_size]
         )
         teacher = models.__dict__[args.arch](
             patch_size=args.patch_size,
             return_all_tokens=True,
             in_chans=1,
-            img_size=[128]
+            img_size=[args.img_size]
         )
         embed_dim = student.embed_dim
     # otherwise, we check if the architecture is in torchvision models
